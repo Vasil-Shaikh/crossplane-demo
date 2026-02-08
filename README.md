@@ -252,6 +252,7 @@ DatabaseClaim/dev-app-db (dev)              True     False   Waiting: Claim is w
    ├─ Instance/testapp-db                   True     False   Creating
    └─ SubnetGroup/testapp-subnet-group      True     True    Available
 ```
+![RDS created](https://github.com/Vasil-Shaikh/crossplane-demo/blob/main/RDS.png)
 
 🎯 What This Demonstrates
 -------------------------
