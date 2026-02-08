@@ -1,0 +1,156 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xdatabases.platform.iamvasil.com
+  labels:
+    platform: iamvasil
+    service: database
+spec:
+  group: platform.iamvasil.com
+  names:
+    kind: XDatabase
+    plural: xdatabases
+  claimNames:
+    kind: DatabaseClaim
+    plural: databaseclaims
+  
+  # Connection secret keys that will be available to developers
+  connectionSecretKeys:
+    - endpoint
+    - port
+    - username
+    - password
+    - database
+  
+  # API versions
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    
+    # Developer-friendly API schema
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              # Environment selection (dev, staging, prod)
+              environment:
+                type: string
+                description: "Target environment for the database"
+                enum: ["dev", "staging", "prod"]
+                default: "dev"
+              
+              # Database size (abstracts instance types)
+              size:
+                type: string
+                description: "Database size: small (dev), medium (staging), large (prod)"
+                enum: ["small", "medium", "large"]
+                default: "small"
+              
+              # Database configuration
+              databaseName:
+                type: string
+                description: "Name of the database to create"
+                pattern: "^[a-z][a-z0-9]*$"
+                minLength: 1
+                maxLength: 20
+              
+              # Optional: Storage size override
+              storageGB:
+                type: integer
+                description: "Storage size in GB (optional override)"
+                minimum: 20
+                maximum: 1000
+                default: 20
+              
+              # Network configuration (optional)
+              networkTier:
+                type: string
+                description: "Network tier: public or private"
+                enum: ["public", "private"]
+                default: "private"
+              
+              # Connection secret namespace
+              writeConnectionSecretsToNamespace:
+                type: string
+                description: "Namespace where connection secrets will be written"
+            
+            # Required fields
+            required:
+              - environment
+              - size
+              - databaseName
+          
+          # Status information developers can see
+          status:
+            type: object
+            properties:
+              # Connection information
+              connectionDetails:
+                type: object
+                properties:
+                  endpoint:
+                    type: string
+                  port:
+                    type: string
+                  database:
+                    type: string
+              
+              # Resource status
+              ready:
+                type: boolean
+              
+              # Environment info
+              environment:
+                type: string
+              
+              # Resource details
+              instanceType:
+                type: string
+              
+              # Subnet IDs for networking
+              subnetIds:
+                type: array
+                items:
+                  type: string
+                description: "List of subnet IDs created for the database"
+              
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+    
+    # Define what fields get printed with kubectl
+    additionalPrinterColumns:
+    - name: Environment
+      type: string
+      jsonPath: .spec.environment
+    - name: Size
+      type: string
+      jsonPath: .spec.size
+    - name: Database
+      type: string
+      jsonPath: .spec.databaseName
+    - name: Ready
+      type: boolean
+      jsonPath: .status.ready
+    - name: Endpoint
+      type: string
+      jsonPath: .status.connectionDetails.endpoint
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp

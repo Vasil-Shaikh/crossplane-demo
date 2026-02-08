@@ -1,0 +1,22 @@
+apiVersion: platform.iamvasil.com/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: dev-app-db
+  namespace: dev
+spec:
+  environment: dev
+  size: small
+  databaseName: testapp
+  writeConnectionSecretsToNamespace: dev
+---
+apiVersion: platform.iamvasil.com/v1alpha1
+kind: DatabaseClaim
+metadata:
+  name: staging-app-db
+  namespace: stage
+spec:
+  environment: staging
+  size: medium
+  databaseName: stagingapp
+  storageGB: 50
+  writeConnectionSecretsToNamespace: stage

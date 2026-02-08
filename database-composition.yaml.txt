@@ -1,0 +1,537 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xdatabases.aws.platform.iamvasil.com
+  labels:
+    provider: aws
+    service: database
+    platform: iamvasil
+spec:
+  # Link to your XRD
+  compositeTypeRef:
+    apiVersion: platform.iamvasil.com/v1alpha1
+    kind: XDatabase
+  
+  # Resources to create for each claim
+  resources:
+  # 1. VPC for database networking
+  - name: database-vpc
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: VPC
+      spec:
+        forProvider:
+          cidrBlock: "10.0.0.0/16"
+          enableDnsHostnames: true
+          enableDnsSupport: true
+          region: us-east-1
+        providerConfigRef:
+          name: default
+    patches:
+    - type: PatchSet
+      patchSetName: common-tags
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-vpc"
+    # Override Name tag for better AWS console visibility
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: spec.databaseName
+        - fromFieldPath: spec.environment
+        strategy: string
+        string:
+          fmt: "%s-%s-vpc"
+      toFieldPath: spec.forProvider.tags.Name
+  
+  # 2. Private subnet for database (AZ 1)
+  - name: database-subnet-1
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: Subnet
+      spec:
+        forProvider:
+          availabilityZone: us-east-1a
+          cidrBlock: "10.0.1.0/24"
+          region: us-east-1
+          vpcIdSelector:
+            matchControllerRef: true
+        providerConfigRef:
+          name: default
+    patches:
+    - type: PatchSet
+      patchSetName: common-tags
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-subnet-1"
+    # Override Name tag for better AWS console visibility
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: spec.databaseName
+        - fromFieldPath: spec.environment
+        strategy: string
+        string:
+          fmt: "%s-%s-subnet-1a"
+      toFieldPath: spec.forProvider.tags.Name
+
+  # 3. Private subnet for database (AZ 2) - for multi-AZ deployments
+  - name: database-subnet-2
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: Subnet
+      spec:
+        forProvider:
+          availabilityZone: us-east-1b
+          cidrBlock: "10.0.2.0/24"
+          region: us-east-1
+          vpcIdSelector:
+            matchControllerRef: true
+        providerConfigRef:
+          name: default
+    patches:
+    - type: PatchSet
+      patchSetName: common-tags
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-subnet-2"
+    # Override Name tag for better AWS console visibility
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: spec.databaseName
+        - fromFieldPath: spec.environment
+        strategy: string
+        string:
+          fmt: "%s-%s-subnet-1b"
+      toFieldPath: spec.forProvider.tags.Name
+
+  # 4. Security Group for database access
+  - name: database-sg
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: SecurityGroup
+      spec:
+        forProvider:
+          description: "Security group for database access"
+          region: us-east-1
+          vpcIdSelector:
+            matchControllerRef: true
+        providerConfigRef:
+          name: default
+    patches:
+    - type: PatchSet
+      patchSetName: common-tags
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-sg"
+    # Override Name tag for better AWS console visibility
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: spec.databaseName
+        - fromFieldPath: spec.environment
+        strategy: string
+        string:
+          fmt: "%s-%s-sg"
+      toFieldPath: spec.forProvider.tags.Name
+
+  # 5. Security Group Rule for PostgreSQL access (Inbound)
+  - name: database-sg-rule
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: SecurityGroupRule
+      spec:
+        forProvider:
+          type: ingress
+          fromPort: 5432
+          toPort: 5432
+          protocol: tcp
+          # ⚠️ EXTREME SECURITY RISK - LAB ONLY ⚠️
+          # Allowing ALL internet access for cross-cloud connectivity
+          # NEVER use 0.0.0.0/0 in production - use specific IP ranges
+          cidrBlocks: ["0.0.0.0/0"]
+          region: us-east-1
+          securityGroupIdSelector:
+            matchControllerRef: true
+        providerConfigRef:
+          name: default
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-sg-rule"
+
+  # 6. Security Group Rule for All Outbound Traffic (Explicit egress rule)
+  - name: database-sg-egress
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: SecurityGroupRule
+      spec:
+        forProvider:
+          type: egress
+          fromPort: 0
+          toPort: 65535
+          protocol: "-1"  # All protocols
+          # ⚠️ LAB ONLY - Allow all outbound traffic ⚠️
+          # Production should restrict outbound access to specific destinations
+          cidrBlocks: ["0.0.0.0/0"]
+          region: us-east-1
+          securityGroupIdSelector:
+            matchControllerRef: true
+        providerConfigRef:
+          name: default
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-sg-egress"
+
+  # 7. Internet Gateway (required for public RDS access)
+  - name: database-igw
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: InternetGateway
+      spec:
+        forProvider:
+          region: us-east-1
+          vpcIdSelector:
+            matchControllerRef: true
+        providerConfigRef:
+          name: default
+    patches:
+    - type: PatchSet
+      patchSetName: common-tags
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-igw"
+    # Override Name tag for better AWS console visibility
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: spec.databaseName
+        - fromFieldPath: spec.environment
+        strategy: string
+        string:
+          fmt: "%s-%s-igw"
+      toFieldPath: spec.forProvider.tags.Name
+
+  # 8. Route Table (for internet routing)
+  - name: database-rt
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: RouteTable
+      spec:
+        forProvider:
+          region: us-east-1
+          vpcIdSelector:
+            matchControllerRef: true
+        providerConfigRef:
+          name: default
+    patches:
+    - type: PatchSet
+      patchSetName: common-tags
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-rt"
+    # Override Name tag for better AWS console visibility
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: spec.databaseName
+        - fromFieldPath: spec.environment
+        strategy: string
+        string:
+          fmt: "%s-%s-rt"
+      toFieldPath: spec.forProvider.tags.Name
+
+  # 9. Route to Internet Gateway
+  - name: database-route
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: Route
+      spec:
+        forProvider:
+          region: us-east-1
+          routeTableIdSelector:
+            matchControllerRef: true
+          destinationCidrBlock: "0.0.0.0/0"
+          gatewayIdRef:
+            name: "placeholder-igw"  # Will be patched
+        providerConfigRef:
+          name: default
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-route"
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: spec.forProvider.gatewayIdRef.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-igw"
+
+  # 10. Route Table Associations (make subnets public)
+  - name: database-rta-1
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: RouteTableAssociation
+      spec:
+        forProvider:
+          region: us-east-1
+          routeTableIdSelector:
+            matchControllerRef: true
+          subnetIdRef:
+            name: "placeholder-subnet-1"  # Will be patched
+        providerConfigRef:
+          name: default
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-rta-1"
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: spec.forProvider.subnetIdRef.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-subnet-1"
+
+  - name: database-rta-2
+    base:
+      apiVersion: ec2.aws.upbound.io/v1beta1
+      kind: RouteTableAssociation
+      spec:
+        forProvider:
+          region: us-east-1
+          routeTableIdSelector:
+            matchControllerRef: true
+          subnetIdRef:
+            name: "placeholder-subnet-2"  # Will be patched
+        providerConfigRef:
+          name: default
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-rta-2"
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: spec.forProvider.subnetIdRef.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-subnet-2"
+
+  # 11. DB Subnet Group (required for RDS)
+  - name: database-subnet-group
+    base:
+      apiVersion: rds.aws.upbound.io/v1beta1
+      kind: SubnetGroup
+      spec:
+        forProvider:
+          region: us-east-1
+          subnetIdSelector:
+            matchControllerRef: true
+        providerConfigRef:
+          name: default
+    patches:
+    - type: PatchSet
+      patchSetName: common-tags
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-subnet-group"
+
+  # 12. RDS Database Instance
+  - name: database-instance
+    base:
+      apiVersion: rds.aws.upbound.io/v1beta1
+      kind: Instance
+      spec:
+        forProvider:
+          region: us-east-1
+          engine: postgres
+          engineVersion: "17.5"
+          instanceClass: db.t3.micro
+          allocatedStorage: 20
+          storageType: gp2
+          username: postgres
+          autoGeneratePassword: true
+          # ⚠️ NEVER USE IN PRODUCTION ⚠️
+          # Making database publicly accessible for cross-cloud lab connectivity
+          # SECURITY RISKS: Exposes database to internet, potential for attacks
+          # PRODUCTION: Always use privatelyAccessible with VPC peering/VPN
+          publiclyAccessible: true
+          passwordSecretRef:
+            key: password
+            namespace: crossplane-system
+            name: "placeholder"
+          vpcSecurityGroupIdSelector:
+            matchControllerRef: true
+          dbSubnetGroupNameSelector:
+            matchControllerRef: true
+          backupRetentionPeriod: 7
+          backupWindow: "03:00-04:00"
+          maintenanceWindow: "sun:04:00-sun:05:00"
+          storageEncrypted: false
+          multiAz: false
+          skipFinalSnapshot: true
+        providerConfigRef:
+          name: default
+        writeConnectionSecretToRef:
+          namespace: crossplane-system
+    patches:
+    - type: PatchSet
+      patchSetName: common-tags
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-db"
+    - type: FromCompositeFieldPath
+      fromFieldPath: metadata.uid
+      toFieldPath: spec.writeConnectionSecretToRef.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-postgresql"
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.writeConnectionSecretsToNamespace
+      toFieldPath: spec.writeConnectionSecretToRef.namespace
+    - type: FromCompositeFieldPath
+      fromFieldPath: metadata.uid
+      toFieldPath: spec.forProvider.passwordSecretRef.name
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-password"
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.storageGB
+      toFieldPath: spec.forProvider.allocatedStorage
+    
+    # Environment-specific configurations using map transforms
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.environment
+      toFieldPath: spec.forProvider.multiAz
+      transforms:
+      - type: map
+        map:
+          dev: false
+          staging: true
+          prod: true
+    
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.environment
+      toFieldPath: spec.forProvider.storageEncrypted
+      transforms:
+      - type: map
+        map:
+          dev: false
+          staging: false
+          prod: false
+    
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.size
+      toFieldPath: spec.forProvider.instanceClass
+      transforms:
+      - type: map
+        map:
+          small: "db.t3.micro"
+          medium: "db.t3.small"
+          large: "db.t3.medium"
+    
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.size
+      toFieldPath: spec.forProvider.allocatedStorage
+      transforms:
+      - type: map
+        map:
+          small: 20
+          medium: 50
+          large: 100
+    
+    # Override Name tag for better AWS console visibility
+    - type: CombineFromComposite
+      combine:
+        variables:
+        - fromFieldPath: spec.databaseName
+        - fromFieldPath: spec.environment
+        strategy: string
+        string:
+          fmt: "%s-%s-db"
+      toFieldPath: spec.forProvider.tags.Name
+
+  # Patch sets for common configurations
+  patchSets:
+  - name: common-tags
+    patches:
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.environment
+      toFieldPath: metadata.labels["platform.iamvasil.com/environment"]
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: metadata.labels["platform.iamvasil.com/database"]
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.environment
+      toFieldPath: spec.forProvider.tags.Environment
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: spec.forProvider.tags.Database
+    - type: FromCompositeFieldPath
+      fromFieldPath: metadata.name
+      toFieldPath: spec.forProvider.tags.CompositeResource
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.databaseName
+      toFieldPath: spec.forProvider.tags.ManagedBy
+      transforms:
+      - type: string
+        string:
+          fmt: "%s-crossplane"
