@@ -222,7 +222,7 @@ kubectl describe xdatabases
 
 Now use Crossplane's trace command to visualize the complete resource hierarchy from your Claims down to the AWS managed resources:
 ```
-crossplane beta trace databaseclaim dev-app-db -n backend-team
+crossplane beta trace databaseclaim dev-app-db -n dev
 ```
 
 This powerful command shows the complete relationship chain:
@@ -253,6 +253,32 @@ DatabaseClaim/dev-app-db (dev)              True     False   Waiting: Claim is w
    └─ SubnetGroup/testapp-subnet-group      True     True    Available
 ```
 ![RDS created](https://github.com/Vasil-Shaikh/crossplane-demo/blob/main/RDS.png)
+
+Finally, the dev team retrieves the DB details from their own namespace, for e.g
+```
+k get secrets -n dev
+```
+```
+k describe secrets -n dev 9d5f7d21-9120-448b-b35d-cff9f061f0c7-postgresql
+```
+(replace with your secret name)
+
+```
+kubectl get secret 9d5f7d21-9120-448b-b35d-cff9f061f0c7-postgresql \
+  -n dev \
+  -o json | jq -r '.data | to_entries[] | "\(.key): \(.value | @base64d)"'
+```
+
+Sample Output
+```
+address: terraform-20260209142436023500000003.cpcsu8620we9.us-east-1.rds.amazonaws.com
+attribute.password: 6QtmP7dXXXXXXXXXXXXX
+endpoint: terraform-20260209142436023500000003.cpcsu8620we9.us-east-1.rds.amazonaws.com:5432
+host: terraform-20260209142436023500000003.cpcsu8620we9.us-east-1.rds.amazonaws.com
+password: 6QtmP7dmXXXXXXXXXXXXX
+port: 5432
+username: postgres
+```
 
 🎯 What This Demonstrates
 -------------------------
